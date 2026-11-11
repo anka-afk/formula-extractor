@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>公式提取器</title>
+  <script>
+    (function () {
+      var theme = '';
+      try {
+        var saved = JSON.parse(localStorage.getItem('formula-extractor:v1') || 'null');
+        if (saved) theme = saved.theme;
+      } catch (error) {
+        theme = '';
+      }
+      if (theme !== 'dark' && theme !== 'light') {
+        theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      }
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
+  <!--__KATEX_CSS__-->
+  <!--__APP_CSS__-->
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">∑</div>
+        <div>
+          <h1>公式提取器</h1>
+          <p>粘贴 AI 回答，全文渲染 · 点击公式直接复制</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="themeToggle" class="icon-btn" title="切换主题" aria-label="切换主题">
+          <span id="themeIcon">☾</span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel input-panel">
+        <div class="panel-head">
+          <div>
+            <h2>AI 回答</h2>
+            <p class="hint">支持纯文本与富文本粘贴 · <kbd>Ctrl</kbd> + <kbd>Enter</kbd> 提取</p>
+          </div>
+          <span id="inputCount" class="input-count">0 字符</span>
+        </div>
+
+        <textarea id="inputText" class="input-area" spellcheck="false" placeholder="把包含公式的 AI 回答粘贴到这里……&#10;&#10;支持 $...$、$$...$$、\(...\)、\[...\] 和 LaTeX 环境。"></textarea>
+
+        <div class="input-actions">
+          <button type="button" id="extractBtn" class="btn primary">提取公式</button>
+          <button type="button" id="pasteBtn" class="btn">从剪贴板粘贴</button>
+          <span class="action-spacer"></span>
+          <label class="check"><input type="checkbox" id="includeCode"> 包含代码块中的公式</label>
+          <label class="check"><input type="checkbox" id="dedupe" checked> 自动去重</label>
+          <button type="button" id="exampleBtn" class="btn ghost">载入示例</button>
+          <button type="button" id="clearBtn" class="btn ghost danger">清空</button>
+        </div>
+
+        <div id="notice" class="notice" hidden></div>
+      </section>
+
+      <section class="panel results-panel" id="resultsPanel">
+        <div class="results-head">
+          <div class="results-title">
+            <h2>提取结果</h2>
+            <span id="stats" class="stats">等待提取</span>
+          </div>
+
+          <div class="results-tools">
+            <div class="segmented" id="viewGroup" role="group" aria-label="视图切换">
+              <button type="button" data-view="doc" class="active">全文</button>
+              <button type="button" data-view="cards">卡片</button>
+            </div>
+
+            <div class="segmented" id="filterGroup" role="group" aria-label="公式类型筛选">
+              <button type="button" data-filter="all" class="active">全部</button>
+              <button type="button" data-filter="inline">行内</button>
+              <button type="button" data-filter="display">行间</button>
+            </div>
+
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <input id="searchInput" type="search" placeholder="搜索公式…" aria-label="搜索公式">
+            </label>
+
+            <select id="formatSelect" class="select" title="复制格式" aria-label="复制格式">
+              <option value="markdown">Markdown（$ / $$）</option>
+              <option value="paren">LaTeX 括号（\( / \[）</option>
+              <option value="raw">纯公式（无包装）</option>
+              <option value="original">保持原始包装</option>
+            </select>
+
+            <button type="button" id="copyAllBtn" class="btn">复制全部</button>
+            <button type="button" id="exportBtn" class="btn ghost">导出 .md</button>
+          </div>
+        </div>
+
+        <p id="docTip" class="doc-tip" hidden>点击任意公式即可复制</p>
+        <div id="docView" class="doc-view" hidden></div>
+        <div id="results" class="results"></div>
+
+        <div id="emptyState" class="empty-state">
+          <div class="empty-mark" aria-hidden="true">∑</div>
+          <h3>还没有公式</h3>
+          <p>粘贴一段包含 LaTeX 的 AI 回答，整段内容会在这里渲染，点一下公式就能复制。</p>
+          <button type="button" id="emptyExampleBtn" class="btn">载入示例</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>所有内容只在本地浏览器处理，不会上传。</span>
+      <span>公式预览由 KaTeX 渲染。</span>
+    </footer>
+  </div>
+
+  <template id="cardTemplate">
+    <article class="formula-card">
+      <div class="card-head">
+        <div class="card-meta">
+          <span class="formula-index"></span>
+          <span class="badge type-badge"></span>
+          <span class="badge origin-badge" hidden></span>
+          <span class="wrapper-label"></span>
+        </div>
+        <div class="card-actions">
+          <button type="button" class="btn tiny copy-raw" title="复制不带分隔符的 LaTeX 源码">源码</button>
+          <button type="button" class="btn tiny primary copy-one" title="按当前格式复制">复制</button>
+        </div>
+      </div>
+      <p class="formula-context" hidden></p>
+      <div class="formula-preview" aria-live="polite"></div>
+      <textarea class="formula-source" spellcheck="false" rows="2" aria-label="公式 LaTeX 源码"></textarea>
+    </article>
+  </template>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="text/plain" id="exampleText">在 PPO 中，策略梯度的目标是最大化
+
+\[
+J(\theta)=\mathbb{E}_{\tau\sim\pi_\theta}\left[\sum_{t=0}^{T} r_t\right]
+\]
+
+其中重要性采样比定义为 $r_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\mathrm{old}}}(a_t\mid s_t)}$。
+
+裁剪后的替代目标为
+
+$$
+L^{\mathrm{CLIP}}(\theta)=\mathbb{E}_{t}\left[\min\left(r_t(\theta)\hat A_t,\ \operatorname{clip}(r_t(\theta),1-\epsilon,1+\epsilon)\hat A_t\right)\right]
+$$
+
+对于离散动作，优势函数可以写成
+
+\begin{align}
+\hat A_t &= \sum_{l=0}^{T-t} (\gamma\lambda)^l \delta_{t+l}, \\
+\delta_t &= r_t + \gamma V(s_{t+1}) - V(s_t).
+\end{align}
+
+价值网络的损失为
+
+\[
+L^{VF}(\theta)=\mathbb{E}_t\left[\left(V_\theta(s_t)-\hat R_t\right)^2\right].
+\]
+  </script>
+
+  <!--__KATEX_JS__-->
+  <!--__PARSER_JS__-->
+  <!--__APP_JS__-->
+</body>
+</html>
