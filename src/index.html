@@ -29,7 +29,7 @@
         <div class="brand-mark" aria-hidden="true">∑</div>
         <div>
           <h1>公式提取器</h1>
-          <p>粘贴 AI 回答，全文渲染 · 点击公式直接复制</p>
+          <p>粘贴 AI 回答，全文渲染 · 点击公式或表格复制</p>
         </div>
       </div>
       <div class="header-actions">
@@ -49,7 +49,7 @@
           <span id="inputCount" class="input-count">0 字符</span>
         </div>
 
-        <textarea id="inputText" class="input-area" spellcheck="false" placeholder="把包含公式的 AI 回答粘贴到这里……&#10;&#10;支持 $...$、$$...$$、\(...\)、\[...\] 和 LaTeX 环境。"></textarea>
+        <textarea id="inputText" class="input-area" spellcheck="false" placeholder="把包含公式或表格的 AI 回答粘贴到这里……&#10;&#10;支持 $...$、$$...$$、\(...\)、\[...\] 和 LaTeX 环境，也支持 Markdown 表格。"></textarea>
 
         <div class="input-actions">
           <button type="button" id="extractBtn" class="btn primary">提取公式</button>
@@ -106,8 +106,8 @@
 
         <div id="emptyState" class="empty-state">
           <div class="empty-mark" aria-hidden="true">∑</div>
-          <h3>还没有公式</h3>
-          <p>粘贴一段包含 LaTeX 的 AI 回答，整段内容会在这里渲染，点一下公式就能复制。</p>
+          <h3>还没有内容</h3>
+          <p>粘贴一段包含 LaTeX 公式或 Markdown 表格的 AI 回答，整段内容会在这里渲染，点公式或表格就能复制。</p>
           <button type="button" id="emptyExampleBtn" class="btn">载入示例</button>
         </div>
       </section>

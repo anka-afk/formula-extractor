@@ -294,7 +294,7 @@
   function updateStats(visibleCount) {
     const total = state.formulas.length;
     if (!total) {
-      els.stats.textContent = state.formulasInput && state.input === state.formulasInput ? '未找到公式' : '等待提取';
+      els.stats.textContent = state.input.trim() ? '未找到公式 · 全文已渲染' : '等待提取';
       return;
     }
 
@@ -1127,7 +1127,7 @@
   function updateDocTip() {
     const label = FORMAT_LABELS[state.format] || FORMAT_LABELS.markdown;
     els.docTip.textContent = '点击公式复制公式 · 点击表格复制整个表格 · 当前格式：' + label;
-    els.docTip.hidden = state.view !== 'doc' || !state.formulas.length;
+    els.docTip.hidden = state.view !== 'doc' || !state.input.trim();
   }
 
   function wrapperLabel(formula) {
@@ -1207,9 +1207,14 @@
     const wrapper = document.createElement('div');
     wrapper.className = 'empty-state compact';
     const title = document.createElement('h3');
-    title.textContent = '没有匹配的公式';
     const text = document.createElement('p');
-    text.textContent = '试试清空搜索，或切换到“全部”筛选。';
+    if (state.formulas.length) {
+      title.textContent = '没有匹配的公式';
+      text.textContent = '试试清空搜索，或切换到“全部”筛选。';
+    } else {
+      title.textContent = '这段内容里没有公式';
+      text.textContent = '切到“全文”视图即可查看完整内容，表格也可以直接复制。';
+    }
     wrapper.appendChild(title);
     wrapper.appendChild(text);
     return wrapper;
@@ -1252,10 +1257,10 @@
     updateFilterButtons();
     updateViewControls();
 
-    const hasFormulas = state.formulas.length > 0;
-    els.emptyState.hidden = hasFormulas;
+    const hasContent = !!state.input.trim();
+    els.emptyState.hidden = hasContent;
 
-    if (!hasFormulas) {
+    if (!hasContent) {
       els.results.replaceChildren();
       els.docView.replaceChildren();
       return;
@@ -1284,7 +1289,7 @@
       state.lastPasteText = '';
       savePasteCache('', '');
       render();
-      setNotice(['请先粘贴包含公式的 AI 回答。'], 'warn');
+      setNotice(['请先粘贴包含公式或表格的 AI 回答。'], 'warn');
       saveState();
       if (!opts.silent) showToast('输入为空', true);
       return;
@@ -1329,14 +1334,24 @@
       messages.push(warning + '。');
     });
 
+    let hasTable = false;
+    try {
+      hasTable = !!Parser.findTable(text, 0, text.length);
+    } catch (error) {
+      hasTable = false;
+    }
+    if (!hasTable && canUseHtml) {
+      hasTable = /<table[\s>]/i.test(state.lastPasteHtml);
+    }
+
     let noticeType = messages.length ? 'info' : '';
     if (!state.formulas.length) {
-      let message = '没有找到公式。请确认粘贴的内容包含 LaTeX 分隔符。';
-      if (canUseHtml) {
-        message += ' 剪贴板富文本中也没有可解析的 MathML/KaTeX 源码；如果原文公式是图片或纯排版字符，需要改用页面抓取方案。';
+      if (!hasTable) {
+        messages.push('没有找到公式或表格，已按全文渲染内容。');
+        if (canUseHtml) {
+          messages.push('剪贴板富文本中也没有可解析的 MathML/KaTeX 源码；如果原文公式是图片或纯排版字符，无法还原 LaTeX。');
+        }
       }
-      messages.push(message);
-      noticeType = 'warn';
     } else if (parsed.warnings.length) {
       noticeType = 'warn';
     }
@@ -1345,11 +1360,13 @@
     render();
     saveState();
 
-    if (opts.scroll && state.formulas.length) {
+    if (opts.scroll && state.input.trim()) {
       els.resultsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     if (!opts.silent) {
-      showToast(state.formulas.length ? '提取到 ' + state.formulas.length + ' 个公式' : '没有找到公式', !state.formulas.length);
+      if (state.formulas.length) showToast('提取到 ' + state.formulas.length + ' 个公式');
+      else if (hasTable) showToast('已渲染全文，点击表格即可复制');
+      else showToast('没有找到公式或表格', true);
     }
   }
 
