@@ -162,6 +162,13 @@ $$
 \delta_t &= r_t + \gamma V(s_{t+1}) - V(s_t).
 \end{align}
 
+常见方法对比如下：
+
+| 方法 | 目标函数 | 是否在线 |
+| :--- | :---: | ---: |
+| PPO | $L^{\mathrm{CLIP}}(\theta)$ | 是 |
+| DPO | $\mathcal{L}_{\mathrm{DPO}}(\theta)$ | 否 |
+
 价值网络的损失为
 
 \[

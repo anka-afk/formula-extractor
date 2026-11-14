@@ -153,6 +153,144 @@
     return /^\$[\d.,]+(?=$|[\s，。；、,.;:)）])/.test(text.slice(index, index + 24));
   }
 
+  function getLineRanges(text, start, end) {
+    const lines = [];
+    let lineStart = start;
+    for (let i = start; i <= end; i++) {
+      if (i === end || text.charAt(i) === '\n') {
+        lines.push({ start: lineStart, end: i });
+        lineStart = i + 1;
+      }
+    }
+    return lines;
+  }
+
+  function trimRange(text, start, end) {
+    let s = start;
+    let e = end;
+    while (s < e && (text.charAt(s) === ' ' || text.charAt(s) === '\t')) s++;
+    while (e > s && /[ \t\r]/.test(text.charAt(e - 1))) e--;
+    return { start: s, end: e, text: text.slice(s, e) };
+  }
+
+  function cellFromRange(text, start, end) {
+    const trimmed = trimRange(text, start, end);
+    return {
+      start: trimmed.start,
+      end: trimmed.end,
+      text: trimmed.text.replace(/\\\|/g, '|')
+    };
+  }
+
+  // Splits a GFM table row. Pipes inside inline code spans stay in the cell,
+  // and \| is treated as a literal pipe.
+  function splitTableRow(text, start, end) {
+    let s = start;
+    let e = end;
+    while (s < e && (text.charAt(s) === ' ' || text.charAt(s) === '\t')) s++;
+    while (e > s && /[ \t\r]/.test(text.charAt(e - 1))) e--;
+
+    let sawPipe = false;
+    if (s < e && text.charAt(s) === '|') {
+      sawPipe = true;
+      s++;
+    }
+    if (e > s && text.charAt(e - 1) === '|' && !isEscaped(text, e - 1)) {
+      sawPipe = true;
+      e--;
+    }
+
+    const cells = [];
+    let cellStart = s;
+    let ticks = 0;
+    let i = s;
+
+    while (i < e) {
+      const ch = text.charAt(i);
+      if (ch === '`') {
+        let run = 1;
+        while (i + run < e && text.charAt(i + run) === '`') run++;
+        if (ticks === 0) ticks = run;
+        else if (run === ticks) ticks = 0;
+        i += run;
+        continue;
+      }
+      if (ch === '|' && ticks === 0 && !isEscaped(text, i)) {
+        sawPipe = true;
+        cells.push(cellFromRange(text, cellStart, i));
+        cellStart = i + 1;
+      }
+      i++;
+    }
+    cells.push(cellFromRange(text, cellStart, e));
+
+    return sawPipe ? cells : null;
+  }
+
+  function tableAlignOf(cellText) {
+    if (!/^:?-+:?$/.test(cellText)) return undefined;
+    const left = cellText.charAt(0) === ':';
+    const right = cellText.charAt(cellText.length - 1) === ':';
+    if (left && right) return 'center';
+    if (right) return 'right';
+    if (left) return 'left';
+    return null;
+  }
+
+  function findTable(text, start, end) {
+    const lines = getLineRanges(text, start, end);
+
+    for (let i = 0; i + 1 < lines.length; i++) {
+      const headerLine = trimRange(text, lines[i].start, lines[i].end);
+      if (!headerLine.text) continue;
+      if (/^(?:[-*+]|\d{1,9}[.)])[ \t]/.test(headerLine.text) || headerLine.text.charAt(0) === '>') continue;
+
+      const header = splitTableRow(text, headerLine.start, headerLine.end);
+      if (!header) continue;
+
+      const delimiterLine = trimRange(text, lines[i + 1].start, lines[i + 1].end);
+      if (!delimiterLine.text) continue;
+
+      const delimiter = splitTableRow(text, delimiterLine.start, delimiterLine.end);
+      if (!delimiter || delimiter.length !== header.length) continue;
+
+      const align = [];
+      let valid = true;
+      for (let c = 0; c < delimiter.length; c++) {
+        const value = tableAlignOf(delimiter[c].text);
+        if (value === undefined) {
+          valid = false;
+          break;
+        }
+        align.push(value);
+      }
+      if (!valid) continue;
+
+      const rows = [];
+      let lastLine = i + 1;
+      for (let j = i + 2; j < lines.length; j++) {
+        const rowLine = trimRange(text, lines[j].start, lines[j].end);
+        if (!rowLine.text) break;
+        const cells = splitTableRow(text, rowLine.start, rowLine.end);
+        if (!cells) break;
+        rows.push({ start: rowLine.start, end: rowLine.end, cells: cells });
+        lastLine = j;
+      }
+
+      const tableEnd = trimRange(text, lines[lastLine].start, lines[lastLine].end).end;
+      return {
+        start: headerLine.start,
+        end: tableEnd,
+        markdown: text.slice(headerLine.start, tableEnd).replace(/\r\n?/g, '\n'),
+        header: header,
+        align: align,
+        rows: rows
+      };
+    }
+
+    return null;
+  }
+
   function validInlineMath(text, open, close, content) {
     if (!content.trim()) return false;
     if (/\s/.test(text.charAt(open + 1))) return false;
@@ -482,6 +620,7 @@
     extractFromText: extractFromText,
     extractFromHtml: extractFromHtml,
     findCodeFences: findCodeFences,
+    findTable: findTable,
     mergeFormulas: mergeFormulas,
     formatFormula: formatFormula,
     getPreviewSource: getPreviewSource,

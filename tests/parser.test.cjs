@@ -131,4 +131,47 @@ test('merges rich-text formulas without duplicating text formulas', () => {
   assert.equal(merged.formulas[1].source, 'y=1');
 });
 
+test('parses markdown tables with alignment and rows', () => {
+  const text = '前言\n\n| 方法 | 目标 | 说明 |\n| :--- | :---: | ---: |\n| PPO | $x$ | 稳定 |\n| DPO | $y$ | 简单 |\n\n后记';
+  const table = Parser.findTable(text, 0, text.length);
+  assert.ok(table);
+  assert.equal(table.header.length, 3);
+  assert.deepEqual(table.align, ['left', 'center', 'right']);
+  assert.equal(table.rows.length, 2);
+  assert.equal(table.rows[1].cells[2].text, '简单');
+  assert.match(table.markdown, /^\| 方法 \| 目标 \| 说明 \|/);
+});
+
+test('tables keep escaped pipes and pipes inside code spans', () => {
+  const text = '| a | b |\n| --- | --- |\n| x \\| y | `p | q` |';
+  const table = Parser.findTable(text, 0, text.length);
+  assert.ok(table);
+  assert.equal(table.rows[0].cells.length, 2);
+  assert.equal(table.rows[0].cells[0].text, 'x | y');
+  assert.equal(table.rows[0].cells[1].text, '`p | q`');
+});
+
+test('requires matching column counts in the delimiter row', () => {
+  const text = '| a | b |\n| --- |\n';
+  assert.equal(Parser.findTable(text, 0, text.length), null);
+});
+
+test('does not mistake setext headings for tables', () => {
+  const text = '标题\n---\n正文';
+  assert.equal(Parser.findTable(text, 0, text.length), null);
+});
+
+test('does not mistake lists containing pipes for tables', () => {
+  const text = '- a | b\n- --- | ---\n';
+  assert.equal(Parser.findTable(text, 0, text.length), null);
+});
+
+test('table cell offsets point at trimmed cell content', () => {
+  const text = '| $a$ | b |\n| --- | --- |';
+  const table = Parser.findTable(text, 0, text.length);
+  const firstCell = table.header[0];
+  assert.equal(text.slice(firstCell.start, firstCell.end), '$a$');
+  assert.equal(firstCell.start, 2);
+});
+
 console.log('\n' + passed + ' tests passed');

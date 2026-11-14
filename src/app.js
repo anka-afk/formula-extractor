@@ -442,19 +442,22 @@
     });
   }
 
-  function appendFormattedLine(parent, line) {
+  function appendFormattedLine(parent, line, transform) {
     if (!line) return;
+    const makeText = function (value) {
+      return document.createTextNode(transform ? transform(value) : value);
+    };
     INLINE_MARK_RE.lastIndex = 0;
     let last = 0;
     let match;
     while ((match = INLINE_MARK_RE.exec(line))) {
       if (match.index > last) {
-        parent.appendChild(document.createTextNode(line.slice(last, match.index)));
+        parent.appendChild(makeText(line.slice(last, match.index)));
       }
       const token = match[0];
       if (token.slice(0, 2) === '**') {
         const strong = document.createElement('strong');
-        strong.textContent = token.slice(2, -2);
+        strong.textContent = transform ? transform(token.slice(2, -2)) : token.slice(2, -2);
         parent.appendChild(strong);
       } else if (token.charAt(0) === '`') {
         const code = document.createElement('code');
@@ -464,7 +467,7 @@
         const link = /^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/.exec(token);
         if (link) {
           const a = document.createElement('a');
-          a.textContent = link[1];
+          a.textContent = transform ? transform(link[1]) : link[1];
           a.href = link[2];
           a.target = '_blank';
           a.rel = 'noopener noreferrer';
@@ -476,30 +479,30 @@
       last = match.index + token.length;
     }
     if (last < line.length) {
-      parent.appendChild(document.createTextNode(line.slice(last)));
+      parent.appendChild(makeText(line.slice(last)));
     }
   }
 
-  function appendFormattedText(parent, text) {
+  function appendFormattedText(parent, text, transform) {
     if (!text) return;
     const lines = text.split('\n');
     lines.forEach(function (line, index) {
       if (index > 0) parent.appendChild(document.createElement('br'));
-      appendFormattedLine(parent, line);
+      appendFormattedLine(parent, line, transform);
     });
   }
 
-  function appendInlineRange(parent, text, start, end, occurrences) {
+  function appendInlineRange(parent, text, start, end, occurrences, transform) {
     let cursor = start;
     occurrences.forEach(function (occurrence) {
       if (occurrence.start < start || occurrence.end > end) return;
       if (occurrence.start > cursor) {
-        appendFormattedText(parent, text.slice(cursor, occurrence.start));
+        appendFormattedText(parent, text.slice(cursor, occurrence.start), transform);
       }
       parent.appendChild(makeDocFormula(occurrence.source, occurrence.type));
       cursor = occurrence.end;
     });
-    if (cursor < end) appendFormattedText(parent, text.slice(cursor, end));
+    if (cursor < end) appendFormattedText(parent, text.slice(cursor, end), transform);
   }
 
   function occurrencesInRange(occurrences, start, end) {
@@ -593,10 +596,62 @@
     return true;
   }
 
+  function stripTableEscapes(value) {
+    return value.replace(/\\\|/g, '|');
+  }
+
+  function appendTableBlock(body, text, table, occurrences) {
+    const width = table.header.length;
+    const tableEl = document.createElement('table');
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+
+    function makeCell(cell, tag, column) {
+      const element = document.createElement(tag);
+      if (table.align[column]) element.setAttribute('data-align', table.align[column]);
+      if (cell) appendInlineRange(element, text, cell.start, cell.end, occurrences, stripTableEscapes);
+      return element;
+    }
+
+    for (let c = 0; c < width; c++) {
+      headRow.appendChild(makeCell(table.header[c], 'th', c));
+    }
+    head.appendChild(headRow);
+    tableEl.appendChild(head);
+
+    if (table.rows.length) {
+      const tbody = document.createElement('tbody');
+      table.rows.forEach(function (row) {
+        const tr = document.createElement('tr');
+        for (let c = 0; c < width; c++) {
+          tr.appendChild(makeCell(row.cells[c], 'td', c));
+        }
+        tbody.appendChild(tr);
+      });
+      tableEl.appendChild(tbody);
+    }
+
+    tableEl.dataset.markdown = table.markdown;
+    body.appendChild(tableEl);
+  }
+
   function appendBlock(body, text, start, end, occurrences) {
     while (start < end && /\s/.test(text.charAt(start))) start++;
     while (end > start && /\s/.test(text.charAt(end - 1))) end--;
     if (start >= end) return;
+
+    let table = null;
+    try {
+      table = Parser.findTable(text, start, end);
+    } catch (error) {
+      table = null;
+    }
+    if (table) {
+      if (table.start > start) appendBlock(body, text, start, table.start, occurrences);
+      appendTableBlock(body, text, table, occurrences);
+      if (table.end < end) appendBlock(body, text, table.end, end, occurrences);
+      return;
+    }
 
     const blockText = text.slice(start, end);
     const local = occurrencesInRange(occurrences, start, end);
@@ -836,6 +891,10 @@
         const value = source.getAttribute(name);
         if (value && /^\d{1,3}$/.test(value)) target.setAttribute(name, value);
       });
+      const styleAlign = /text-align\s*:\s*(left|center|right)/i.exec(source.getAttribute('style') || '');
+      const align = (source.getAttribute('align') || '').toLowerCase();
+      const value = /^(left|center|right)$/.test(align) ? align : (styleAlign ? styleAlign[1].toLowerCase() : '');
+      if (value) target.setAttribute('data-align', value);
     } else if (tag === 'OL') {
       const start = source.getAttribute('start');
       if (start && /^-?\d{1,6}$/.test(start)) target.setAttribute('start', start);
@@ -896,6 +955,136 @@
     return body;
   }
 
+  function markdownCellText(cell) {
+    let out = '';
+    Array.from(cell.childNodes).forEach(function (node) {
+      if (node.nodeType === 3) {
+        out += (node.nodeValue || '').replace(/\|/g, '\\|');
+        return;
+      }
+      if (node.nodeType !== 1) return;
+
+      const tag = node.tagName.toUpperCase();
+      if (tag === 'BR') {
+        out += '<br>';
+        return;
+      }
+      if (node.hasAttribute('data-doc-formula')) {
+        out += '$' + (node.getAttribute('data-source') || '') + '$';
+        return;
+      }
+      if (tag === 'CODE') {
+        out += '`' + (node.textContent || '') + '`';
+        return;
+      }
+      if (tag === 'STRONG' || tag === 'B') {
+        out += '**' + markdownCellText(node) + '**';
+        return;
+      }
+      if (tag === 'EM' || tag === 'I') {
+        out += '*' + markdownCellText(node) + '*';
+        return;
+      }
+      if (tag === 'A') {
+        const href = node.getAttribute('href') || '';
+        out += '[' + markdownCellText(node) + '](' + href + ')';
+        return;
+      }
+      out += markdownCellText(node);
+    });
+    return out.replace(/[ \t\r\n]+/g, ' ').trim();
+  }
+
+  function tableToMarkdown(table) {
+    const matrix = Array.from(table.rows).map(function (row) {
+      return Array.from(row.cells).map(function (cell) {
+        return {
+          text: markdownCellText(cell),
+          align: (cell.getAttribute('data-align') || '').toLowerCase()
+        };
+      });
+    }).filter(function (cells) { return cells.length > 0; });
+
+    if (!matrix.length) return '';
+
+    const width = matrix[0].length;
+    const delimiter = matrix[0].map(function (cell) {
+      if (cell.align === 'center') return ':---:';
+      if (cell.align === 'right') return '---:';
+      if (cell.align === 'left') return ':---';
+      return '---';
+    });
+
+    const rowText = function (cells) {
+      const parts = [];
+      for (let i = 0; i < width; i++) parts.push(cells[i] ? cells[i].text : '');
+      return '| ' + parts.join(' | ') + ' |';
+    };
+
+    const lines = [rowText(matrix[0]), '| ' + delimiter.join(' | ') + ' |'];
+    matrix.slice(1).forEach(function (cells) {
+      lines.push(rowText(cells));
+    });
+    return lines.join('\n');
+  }
+
+  function setupDocTables(body) {
+    Array.from(body.querySelectorAll('table')).forEach(function (table) {
+      if (table.parentElement && table.parentElement.closest('.doc-table')) return;
+
+      const markdown = table.dataset.markdown || tableToMarkdown(table);
+      if (!markdown) return;
+
+      const container = document.createElement('div');
+      container.className = 'doc-table';
+      const scroll = document.createElement('div');
+      scroll.className = 'doc-table-scroll';
+      scroll.title = '点击表格复制整个表格（Markdown）';
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'doc-table-copy';
+      button.textContent = '复制表格';
+      button.title = '复制整个表格（Markdown）';
+      button.setAttribute('aria-label', '复制整个表格的 Markdown');
+
+      const parent = table.parentNode;
+      if (!parent) return;
+      parent.insertBefore(container, table);
+      container.appendChild(button);
+      container.appendChild(scroll);
+      scroll.appendChild(table);
+      table.removeAttribute('data-markdown');
+
+      function copyTable() {
+        copyText(markdown).then(function (copied) {
+          showToast(copied ? '已复制整个表格' : '复制失败，请手动选择表格内容复制', !copied);
+        }).catch(function () {
+          showToast('复制失败，请手动选择表格内容复制', true);
+        });
+        container.classList.remove('copied');
+        void container.offsetWidth;
+        container.classList.add('copied');
+      }
+
+      button.addEventListener('click', function (event) {
+        event.stopPropagation();
+        copyTable();
+      });
+
+      scroll.addEventListener('click', function (event) {
+        if (event.target.closest('a, [data-doc-formula]')) return;
+        const selection = window.getSelection ? String(window.getSelection()) : '';
+        if (selection.trim()) return;
+        copyTable();
+      });
+
+      container.addEventListener('animationend', function () {
+        container.classList.remove('copied');
+      });
+    });
+  }
+
   function renderDoc() {
     els.docView.replaceChildren();
     if (!state.input.trim()) return;
@@ -931,12 +1120,13 @@
     }
 
     els.docView.appendChild(body);
+    setupDocTables(body);
     hydrateDocFormulas(body);
   }
 
   function updateDocTip() {
     const label = FORMAT_LABELS[state.format] || FORMAT_LABELS.markdown;
-    els.docTip.textContent = '点击任意公式即可复制 · 当前格式：' + label;
+    els.docTip.textContent = '点击公式复制公式 · 点击表格复制整个表格 · 当前格式：' + label;
     els.docTip.hidden = state.view !== 'doc' || !state.formulas.length;
   }
 
